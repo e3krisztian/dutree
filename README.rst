@@ -69,8 +69,8 @@ History
 
   - **Fix so the tests work with Python 3 as well.**
   - **Fix grave bugs with real size.**
-    The real size calculation was wrong sometimes, it raised assertion
-    sometimes and the leaf count would be off sometimes.
+    The real size calculation was wrong sometimes, it could raise
+    assertions or the leaf count could be off.
 
 * v1.5
 
