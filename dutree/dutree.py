@@ -516,24 +516,18 @@ def main():
 
     args = parser.parse_args()
 
-    use_apparent_size = True
+    run(pathname=args.path, use_apparent_size=(not args.count_blocks),
+        xdev=args.xdev, skip_proc_sys=(not args.no_skip_proc_sys))
 
-    if args.count_blocks:
-        use_apparent_size = False
 
-        def getsize(node):
-            return node.use_size()
-    else:
-
+def run(pathname, use_apparent_size, xdev, skip_proc_sys):
+    if use_apparent_size:
         def getsize(node):
             return node.app_size()
+    else:
+        def getsize(node):
+            return node.use_size()
 
-    run(pathname=args.path, getsize=getsize,
-        use_apparent_size=use_apparent_size, xdev=args.xdev,
-        skip_proc_sys=(not args.no_skip_proc_sys))
-
-
-def run(pathname, getsize, use_apparent_size, xdev, skip_proc_sys):
     verbose = True and not use_apparent_size
     scanner = DuScan(pathname)
     if xdev:
