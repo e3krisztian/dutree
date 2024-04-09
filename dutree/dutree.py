@@ -56,6 +56,7 @@
 # **NOTE**: On filesystems with built-in compression (like ZFS) or with many
 # sparse files, you may want to check the --count-blocks option.
 #
+import argparse
 import sys
 import warnings
 
@@ -304,9 +305,33 @@ class DuScan:
     "Disk Usage Tree scanner"
 
     def __init__(self, pathname):
+        self._dev_allow = []
+        self._dev_deny = []
+        self._dev = lstat(pathname).st_dev
         self._path = self._normpath(pathname)
         self._tree = None
         self._check_path()
+
+    def skip_other_filesystems(self):
+        self._dev_allow = [self._dev]
+
+    def skip_proc_sys_filesystems(self):
+        """
+        Skip /proc and /sys. There's nothing of interest for us there
+
+        Those pseudofiles will mostly be 0-sized, and if they're not, they
+        represent memory anyway, not something we can clean up.
+        """
+        for devname in ('/proc', '/sys'):
+            try:
+                device = lstat(devname).st_dev
+            except Exception:
+                warnings.warn(
+                    f'{devname} not found, so device is not skipped',
+                    OsWarning)
+            finally:
+                if device != self._dev:
+                    self._dev_deny.append(device)
 
     def _normpath(self, pathname):
         "Return path normalized for duscan usage: no trailing slash."
@@ -390,7 +415,13 @@ class DuScan:
                 warnings.warn(str(e), OsWarning)
                 continue
 
-            if S_ISREG(st.st_mode):
+            if self._dev_allow and st.st_dev not in self._dev_allow:
+                pass
+
+            elif self._dev_deny and st.st_dev in self._dev_deny:
+                pass
+
+            elif S_ISREG(st.st_mode):
                 if st.st_blocks == 0:
                     # Pseudo-files, like the one in /proc have 0-block
                     # files. We definitely don't want to count those,
@@ -468,34 +499,46 @@ def human(value):
 
 
 def main():
-    pathname = None
-    if len(sys.argv) == 2:
+    parser = argparse.ArgumentParser(
+        prog='dutree', description='dutree shows a summary of'
+        'the directories/files which take up the most space.')
+    parser.add_argument(
+        '--count-blocks', help='count block size not app size',
+        action='store_true')
+    parser.add_argument(
+        '--xdev', help='stay on the same fileystem', action='store_true')
+    parser.add_argument(
+        '--no-skip-proc-sys',
+        help='do not skip the filesystem devices for proc and sys '
+        'directories, by default these are skipped', action='store_true')
+    parser.add_argument('path')
+
+    args = parser.parse_args()
+
+    use_apparent_size = True
+
+    if args.count_blocks:
+        use_apparent_size = False
+
+        def getsize(node):
+            return node.use_size()
+    else:
+
         def getsize(node):
             return node.app_size()
 
-        pathname = sys.argv[1]
-        use_apparent_size = True
-
-    elif len(sys.argv) == 3:
-        def getsize(node):
-            return node.use_size()
-
-        if sys.argv[1] == '--count-blocks':
-            pathname = sys.argv[2]
-        elif sys.argv[2] == '--count-blocks':
-            pathname = sys.argv[1]
-        use_apparent_size = False
-
-    if pathname is None:
-        sys.stderr.write('Usage: dutree [--count-blocks] PATH\n')
-        sys.exit(1)
-
-    run(pathname, use_apparent_size, getsize)
+    run(pathname=args.path, getsize=getsize,
+        use_apparent_size=use_apparent_size, xdev=args.xdev,
+        skip_proc_sys=(not args.no_skip_proc_sys))
 
 
-def run(pathname, use_apparent_size, getsize):
+def run(pathname, getsize, use_apparent_size, xdev, skip_proc_sys):
     verbose = True and not use_apparent_size
     scanner = DuScan(pathname)
+    if xdev:
+        scanner.skip_other_filesystems()
+    elif skip_proc_sys:
+        scanner.skip_proc_sys_filesystems()
     tree = scanner.scan(use_apparent_size=use_apparent_size)
     for leaf in tree.get_leaves():
         sys.stdout.write(' {0:>7s}  {1}{2}\n'.format(
