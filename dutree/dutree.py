@@ -327,7 +327,7 @@ class DuScan:
                 device = lstat(devname).st_dev
             except Exception:
                 warnings.warn(
-                    f'{devname} not found, so device is not skipped',
+                    '{} not found, so device is not skipped'.format(devname),
                     OsWarning)
             finally:
                 if device != self._dev:
