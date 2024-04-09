@@ -10,7 +10,7 @@ space*.
 
 Example usage::
 
-    $ dutree /srv
+    $ dutree /srv --apparent-size
 
 Annotated output, where only paths of >5% of the total size are shown
 (which is about 4GB for this dataset)::
@@ -37,10 +37,6 @@ Annotated output, where only paths of >5% of the total size are shown
 
 **NOTE**: The directories do not count the size of themselves, only of
 their contents. This explains any discrepancies with ``du -sb`` output.
-
-**NOTE**: On filesystems with built-in compression (like ZFS) or with many
-sparse files, you may want to check the --count-blocks option. This
-should better reflect the actual used size (and align with ``du -sh``).
 
 
 Library usage::

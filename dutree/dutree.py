@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # dutree -- a quick and memory efficient disk usage scanner
-# Copyright (C) 2017,2018,2019  Walter Doekes, OSSO B.V.
+# Copyright (C) 2017,2018,2019,2024  Walter Doekes, OSSO B.V.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 #
 # Example usage::
 #
-#     $ dutree /srv
+#     $ dutree /srv --apparent-size
 #
 # Annotated output, where only paths of >5% of the total size are shown
 # (which is about 4GB for this dataset)::
@@ -52,9 +52,6 @@
 #
 # **NOTE**: The directories do not count the size of themselves, only of
 # their contents. This explains any discrepancies with ``du -sb`` output.
-#
-# **NOTE**: On filesystems with built-in compression (like ZFS) or with many
-# sparse files, you may want to check the --count-blocks option.
 #
 import argparse
 import sys
@@ -504,8 +501,10 @@ def main():
                 'dutree shows a summary of the directories/files which take '
                 'up the most space.'))
     parser.add_argument(
-        '--count-blocks', action='store_true',
-        help='count block size, not apparent size')
+        '-b', '--apparent-size', action='store_true', help=(
+            'use apparent size, not block size, when counting file size'))
+    parser.add_argument(
+        '--count-blocks', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument(
         '--xdev', action='store_true', help='stay on the same fileystem')
     parser.add_argument(
@@ -516,7 +515,12 @@ def main():
 
     args = parser.parse_args()
 
-    run(pathname=args.path, use_apparent_size=(not args.count_blocks),
+    if args.count_blocks:
+        warnings.warn(
+            '--count-blocks is default now, use --apparent-size to negate',
+            OsWarning)
+
+    run(pathname=args.path, use_apparent_size=args.apparent_size,
         xdev=args.xdev, skip_proc_sys=(not args.no_skip_proc_sys))
 
 
