@@ -500,17 +500,18 @@ def human(value):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog='dutree', description='dutree shows a summary of'
-        'the directories/files which take up the most space.')
+            prog='dutree', description=(
+                'dutree shows a summary of the directories/files which take '
+                'up the most space.'))
     parser.add_argument(
-        '--count-blocks', help='count block size not app size',
-        action='store_true')
+        '--count-blocks', action='store_true',
+        help='count block size, not apparent size')
     parser.add_argument(
-        '--xdev', help='stay on the same fileystem', action='store_true')
+        '--xdev', action='store_true', help='stay on the same fileystem')
     parser.add_argument(
-        '--no-skip-proc-sys',
-        help='do not skip the filesystem devices for proc and sys '
-        'directories, by default these are skipped', action='store_true')
+        '--no-skip-proc-sys', action='store_true', help=(
+            'do not skip the filesystem devices for proc and sys '
+            'directories, by default these are skipped'))
     parser.add_argument('path')
 
     args = parser.parse_args()
