@@ -69,6 +69,12 @@ Development:
 History
 -------
 
+* v1.7
+
+  - **Skip /proc and /sys filesystems by default.**
+  - **Use --xdev to stay on the same filesystem.**
+  - **Uses --count-blocks by default; use --apparent-size to negate.**
+
 * v1.6
 
   - **Fix so the tests work with Python 3 as well.**
