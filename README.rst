@@ -58,6 +58,14 @@ Library usage::
     12.092280263081193
 
 
+Development:
+
+- Please run the python2 and python3 tests after developing::
+
+    python2 dutree/test_dutree.py
+    python3 dutree/test_dutree.py
+
+
 History
 -------
 

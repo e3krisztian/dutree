@@ -1,5 +1,5 @@
 # dutree -- a quick and memory efficient disk usage scanner
-# Copyright (C) 2018,2019  Walter Doekes, OSSO B.V.
+# Copyright (C) 2018,2019,2024  Walter Doekes, OSSO B.V.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,6 +27,10 @@ class Node(object):
     def __init__(self, name, size):
         self.name = name
         self.size = size
+
+    @property
+    def st_dev(self):  # for stat
+        return 1234    # not testing right now
 
     @property
     def st_blocks(self):  # for stat
