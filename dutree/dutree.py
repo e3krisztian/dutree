@@ -53,11 +53,13 @@
 # **NOTE**: The directories do not count the size of themselves, only of
 # their contents. This explains any discrepancies with ``du -sb`` output.
 #
+from __future__ import print_function
+
 import argparse
 import sys
 import warnings
 
-from os import listdir, lstat, path
+from os import environ, listdir, lstat, path
 from stat import S_ISDIR, S_ISREG
 
 
@@ -476,6 +478,259 @@ class DuScan:
         return app_mixed_total, use_mixed_total, fraction
 
 
+class PlanbSwiftSyncListFiles:
+    """
+    Path object generator used by the PlanB SwiftSync Disk Usage Tree scanner
+
+    Scans a single text file that has the following format:
+
+        media/0023f5ac/1080.jpg|2022-02-24T09:58:28.598120|113948
+        media/0023f5ac/2668.jpg|2021-06-08T07:03:33.043100|241190
+        media/0023f5ac/3224.jpg|2021-06-08T07:03:35.341960|66773
+        ...
+
+    Or optionally with container/bucket prefix:
+
+        bucket1|media/0023f5ac/1080.jpg|2022-02-24T09:58:28.598120|113948
+        bucket1|media/0023f5ac/2668.jpg|2021-06-08T07:03:33.043100|241190
+        bucket1|media/0023f5ac/3224.jpg|2021-06-08T07:03:35.341960|66773
+        ...
+
+    Allows the files to be listed by:
+
+        planbswiftsynclistfiles.listdir(pathobj)
+
+    Where pathobj is a previously returned object from get_root() or listdir().
+
+    A path object looks like this:
+
+        (pathname, filesize_if_dir_else_None, path_without_slash_length)
+
+    I would have preferred a nice object, but all the indirection in
+    Python takes valuable CPU user time. This tuple layout seemed to be
+    fastest.
+
+    Users have to know:
+
+        - If tuple[1] is None, the path is a directory.
+        - If tuple[1] is not None, it is an integer size. The path is a file.
+        - The path name (file or directory) is tuple[0][0:tuple[2]].
+
+    The manual slicing hopes to avoid many duplicate Python objects in memory:
+
+        - Instead of "A/", "A/B/", "A/B/C.txt",
+        - we have "A/B/C.txt" three times with lengths: 1, 3, 9.
+
+    The mentioned file format is used by PlanB SwiftSync
+    https://github.com/ossobv/planb/blob/main/contrib/planb-swiftsync.py
+    """
+    def __init__(self, filename, root_name=''):
+        self._root_with_slash = root_name + '/'
+        self._fp = open(filename, 'rb')
+        self._fpit = iter(self._fp)
+
+        # We must store the currently available file here, because
+        # multiple invocations of PlanbSwiftSyncListFiles.listdir() can
+        # use it.
+        self._fileobj = None
+
+    def close(self):
+        """
+        Close this when done
+        """
+        self._fp.close()
+        self._fp = None
+
+    def get_root(self):
+        """
+        Construct the root path object that we'll use to start the scan
+
+        Every path object returned by PlanbSwiftSyncListFiles is a::
+
+            (pathname, filesize_if_dir_else_None, path_without_slash_length)
+
+        We would like this to be a nice object instead, but that is
+        significantly slower.
+        """
+        return (
+            self._root_with_slash, None, len(self._root_with_slash) - 1)
+
+    def get(self):
+        """
+        Get a path object from the filelist
+
+        The path object looks like::
+
+            (filename, filesize, filename_length)
+
+        That is a subset of the path object. The filelist only contains
+        files, so we'll only return the leaf objects here.
+
+        At EOF, get() raises a StopIteration.
+        """
+        if self._fileobj is not None:
+            return self._fileobj
+
+        # Can raise StopIteration
+        line = next(self._fpit).decode('utf-8')
+
+        filename, date, filesize = line.rsplit('|', 2)
+        filename = (
+            self._root_with_slash +
+            filename.replace('|', '/').rstrip('/'))
+        filesize = int(filesize)
+
+        # Again, the tuple:
+        # (pathname, size_if_dir_else_None, path_without_slash_length)
+        # Instead of substrings, we pass "string slices" around by
+        # manually passing the length of the path name.
+        self._fileobj = (filename, filesize, len(filename))
+
+        return self._fileobj
+
+    def use(self):
+        self._fileobj = None
+
+    def listdir(self, dirobj):
+        dirname, dirsize, dirlength = dirobj
+        # assert dirsize is None, (dirname, dirsize, dirlength)
+
+        while True:
+            # For path object A/B/C/D and dirobj A/B, we have the
+            # following cases:
+            # - A/B/C/D -> a child listdir() will pick this up;
+            # - A/B/C/ -> we pick this up
+            # - A/B/C.txt -> we pick this up
+            # - A/C -> a parent listdir() picks this up.
+            try:
+                # This pathobj can change between runs, even though we
+                # do not self.use() it. Why? Because child listdir()s
+                # will also use it, and if _they_ are at the file level,
+                # they will mark it as used.
+                pathobj = self.get()
+            except StopIteration:
+                # EOF
+                break
+
+            if not pathobj[0].startswith(dirname[0:(dirlength + 1)]):
+                # New file is higher in the directory tree. Parent
+                # listdir() will continue.
+                break
+
+            slashidx = pathobj[0].find('/', dirlength + 1)
+            if slashidx > -1:
+                # New file is in this directory tree.
+                yield (pathobj[0], None, slashidx)
+
+            else:
+                # New file is in this directory tree, and it is a file.
+                # assert pathobj[1] is not None, pathobj
+                yield pathobj
+
+                # We're done with the file (and no one has needed to
+                # listdir() anything yet, because this was a leaf), mark
+                # it as used.
+                self.use()
+
+
+class PlanbSwiftSyncDuScan:
+    """
+    PlanB SwiftSync (file) Disk Usage Tree scanner
+
+    See PlanbSwiftSyncListFiles docs for the file format it scans.
+    """
+    def __init__(self, pathname, root_name=''):  # 'ROOT'
+        self._listfiles = PlanbSwiftSyncListFiles(pathname, root_name)
+        self._path = self._listfiles.get_root()
+        self._tree = None
+
+    def scan(self, use_apparent_size=None):
+        assert self._tree is None
+        self._tree = DuNode.new_dir(self._path[0][0:self._path[2]])
+        self._app_subtotal = 0
+        app_leftover_bytes, new_fraction, keep_node = (
+            self._scan(self._path, self._tree))
+        assert keep_node and not app_leftover_bytes, (
+            keep_node, app_leftover_bytes)
+
+        # Close our file.
+        self._listfiles.close()
+
+        # Do another prune run, since the fraction size has grown during the
+        # scan. Then merge nodes that couldn't get merged sooner.
+        self._tree.prune_if_smaller_than(new_fraction, True)
+        self._tree.merge_upwards_if_smaller_than(new_fraction, True)
+        return self._tree
+
+    def _scan(self, pathobj, parent_node):
+        fraction = self._app_subtotal // 20
+        children = []   # large separate child nodes
+
+        try:
+            files = self._listfiles.listdir(pathobj)
+        except OSError as e:
+            # PermissionError: [Errno 13] Permission denied:
+            #   '/sys/fs/fuse/connections/85'
+            warnings.warn(str(e), OsWarning)
+            app_mixed_total = 0
+        else:
+            app_mixed_total, fraction = (
+                self._scan_inner(files, children, fraction))
+
+        # Do we have children or a total that's large enough: keep this
+        # node.
+        if children or app_mixed_total >= fraction:
+            parent_node.add_branches(*children)
+            if children:
+                filename, filesize, length = pathobj
+                pathname = filename[0:length]
+                child_node = DuNode.new_leftovers(
+                    pathname, app_mixed_total, app_mixed_total)
+                parent_node.add_branches(child_node)
+            else:
+                parent_node._set_size(app_mixed_total, app_mixed_total)
+            app_mixed_total = 0
+            keep_node = True
+        else:
+            keep_node = False
+
+        # Leftovers, the new fraction and whether to keep the child.
+        return app_mixed_total, fraction, keep_node
+
+    def _scan_inner(self, files, children, fraction):
+        app_mixed_total = 0  # "rest of the dir", add to this node
+
+        for pathobj in files:
+            pathname, pathsize, pathlength = pathobj
+
+            if pathsize is not None:
+                if pathsize >= fraction:
+                    child_node = DuNode.new_file(pathname, pathsize, pathsize)
+                    children.append(child_node)
+                    self._app_subtotal += child_node.app_size()
+                else:
+                    # The file is too small and it doesn't get its own
+                    # node. Count it on this node.
+                    app_mixed_total += pathsize
+                    self._app_subtotal += pathsize
+
+            else:
+                child_node = DuNode.new_dir(pathname[0:pathlength])
+
+                app_leftover_bytes, fraction, keep_node = (
+                    self._scan(pathobj, child_node))
+                if keep_node:
+                    # assert not app_leftover_bytes, app_leftover_bytes
+                    children.append(child_node)
+                else:
+                    app_mixed_total += app_leftover_bytes
+
+            # Recalculate fraction based on updated subtotal.
+            fraction = self._app_subtotal // 20
+
+        return app_mixed_total, fraction
+
+
 def human(value):
     "If val>=1000 return val/1024+KiB, etc."
     if value >= 1073741824000:
@@ -531,12 +786,22 @@ def run(pathname, use_apparent_size, xdev, skip_proc_sys):
             return node.use_size()
 
     verbose = True and not use_apparent_size
-    scanner = DuScan(pathname)
-    if xdev:
-        scanner.skip_other_filesystems()
-    elif skip_proc_sys:
-        scanner.skip_proc_sys_filesystems()
+
+    try:
+        scanner = DuScan(pathname)
+        if xdev:
+            scanner.skip_other_filesystems()
+        elif skip_proc_sys:
+            scanner.skip_proc_sys_filesystems()
+    except OSError as e:
+        if e.args[0] == 20 and environ.get('DUTREE_EXPERIMENTAL'):  # ENOTDIR
+            scanner = PlanbSwiftSyncDuScan(
+                pathname, '{{{}}}'.format(pathname))
+        else:
+            raise
+
     tree = scanner.scan(use_apparent_size=use_apparent_size)
+
     for leaf in tree.get_leaves():
         sys.stdout.write(' {0:>7s}  {1}{2}\n'.format(
             human(getsize(leaf)), leaf.name(),
