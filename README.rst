@@ -69,6 +69,13 @@ Development:
 History
 -------
 
+* v1.8
+
+  - **Add experimental feature to do scanning from a file instead of the
+    filesystem.**
+    See commit bbebcf98 for details.
+    Original code by Seppe Lucas.
+
 * v1.7
 
   - **Skip /proc and /sys filesystems by default.**
