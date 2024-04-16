@@ -302,12 +302,15 @@ class DuScan:
     "Disk Usage Tree scanner"
 
     def __init__(self, pathname):
+        if not path.isdir(pathname):
+            # ENOTDIR
+            raise OSError(20, 'Not a directory: {!r}'.format(pathname))
+
         self._dev_allow = []
         self._dev_deny = []
         self._dev = lstat(pathname).st_dev
-        self._path = self._normpath(pathname)
+        self._path = pathname.rstrip('/')  # no trailing slashes
         self._tree = None
-        self._check_path()
 
     def skip_other_filesystems(self):
         self._dev_allow = [self._dev]
@@ -330,20 +333,6 @@ class DuScan:
                 if device != self._dev:
                     self._dev_deny.append(device)
 
-    def _normpath(self, pathname):
-        "Return path normalized for duscan usage: no trailing slash."
-        if pathname == '/':
-            pathname = ''
-        elif pathname.endswith('/'):
-            pathname = pathname[:-1]
-        assert not pathname.endswith('/'), pathname
-        return pathname
-
-    def _check_path(self):
-        "Immediately check if we can access path. Otherwise bail."
-        if not path.isdir(self._path or '/'):
-            raise OSError('Path {!r} is not a directory'.format(self._path))
-
     def scan(self, use_apparent_size=True):
         assert self._tree is None
         self._tree = DuNode.new_dir(self._path)
@@ -362,11 +351,16 @@ class DuScan:
         return self._tree
 
     def _scan(self, pathname, parent_node, a_or_u):
-        fraction = (  # initialize fraction
+        fraction = (    # initialize fraction
             (self._use_subtotal, self._app_subtotal)[a_or_u] // 20)
-        children = []                        # large separate child nodes
+        children = []   # large separate child nodes
 
         try:
+            # The code has been tried using os.scandir(). It improved nothing:
+            # - If it's a file, we have to lstat always;
+            # - if it's a directory, we could skip the lstat, but we
+            #   have to os.scandir() it, and that does a newfstatat()
+            #   anyway.
             files = listdir(pathname or '/')
         except OSError as e:
             # PermissionError: [Errno 13] Permission denied:
@@ -520,8 +514,12 @@ def main():
             '--count-blocks is default now, use --apparent-size to negate',
             OsWarning)
 
-    run(pathname=args.path, use_apparent_size=args.apparent_size,
-        xdev=args.xdev, skip_proc_sys=(not args.no_skip_proc_sys))
+    try:
+        run(pathname=args.path, use_apparent_size=args.apparent_size,
+            xdev=args.xdev, skip_proc_sys=(not args.no_skip_proc_sys))
+    except OSError as e:
+        print('dutree: error: {}'.format(e), file=sys.stderr)
+        exit(1)
 
 
 def run(pathname, use_apparent_size, xdev, skip_proc_sys):
