@@ -504,11 +504,11 @@ class PlanbSwiftSyncListFiles:
 
     A path object looks like this:
 
-        (pathname, filesize_if_dir_else_None, path_without_slash_length)
+        (pathname, filesize_if_file_else_None, path_without_slash_length)
 
-    I would have preferred a nice object, but all the indirection in
-    Python takes valuable CPU user time. This tuple layout seemed to be
-    fastest.
+    A nice object with pretty properties would have been preferred, but
+    all the indirection in Python takes valuable CPU user time. This
+    tuple layout appeared to be fastest.
 
     Users have to know:
 
@@ -545,12 +545,9 @@ class PlanbSwiftSyncListFiles:
         """
         Construct the root path object that we'll use to start the scan
 
-        Every path object returned by PlanbSwiftSyncListFiles is a::
+        The root path object points to a directory so it is a:
 
-            (pathname, filesize_if_dir_else_None, path_without_slash_length)
-
-        We would like this to be a nice object instead, but that is
-        significantly slower.
+            (pathname, None, path_without_slash_length)
         """
         return (
             self._root_with_slash, None, len(self._root_with_slash) - 1)
@@ -559,7 +556,7 @@ class PlanbSwiftSyncListFiles:
         """
         Get a path object from the filelist
 
-        The path object looks like::
+        The path object looks like:
 
             (filename, filesize, filename_length)
 
@@ -581,7 +578,7 @@ class PlanbSwiftSyncListFiles:
         filesize = int(filesize)
 
         # Again, the tuple:
-        # (pathname, size_if_dir_else_None, path_without_slash_length)
+        # (pathname, filesize_if_file_else_None, path_without_slash_length)
         # Instead of substrings, we pass "string slices" around by
         # manually passing the length of the path name.
         self._fileobj = (filename, filesize, len(filename))
@@ -592,6 +589,13 @@ class PlanbSwiftSyncListFiles:
         self._fileobj = None
 
     def listdir(self, dirobj):
+        """
+        Returns an iterator that yields path objects in this dir object
+
+        Every path object returned by PlanbSwiftSyncListFiles is a:
+
+            (pathname, filesize_if_file_else_None, path_without_slash_length)
+        """
         dirname, dirsize, dirlength = dirobj
         # assert dirsize is None, (dirname, dirsize, dirlength)
 
