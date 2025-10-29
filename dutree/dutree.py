@@ -303,7 +303,7 @@ class DuNode:
 class DuScan:
     "Disk Usage Tree scanner"
 
-    def __init__(self, pathname):
+    def __init__(self, pathname, count=False):
         if not path.isdir(pathname):
             # ENOTDIR
             raise OSError(20, 'Not a directory: {!r}'.format(pathname))
@@ -313,6 +313,7 @@ class DuScan:
         self._dev = lstat(pathname).st_dev
         self._path = pathname.rstrip('/')  # no trailing slashes
         self._tree = None
+        self._count = count
 
     def skip_other_filesystems(self):
         self._dev_allow = [self._dev]
@@ -331,7 +332,7 @@ class DuScan:
                 warnings.warn(
                     '{} not found, so device is not skipped'.format(devname),
                     OsWarning)
-            finally:
+            else:
                 if device != self._dev:
                     self._dev_deny.append(device)
 
@@ -415,17 +416,21 @@ class DuScan:
                 pass
 
             elif S_ISREG(st.st_mode):
-                if st.st_blocks == 0:
+                if st.st_blocks == 0 and not self._count:
                     # Pseudo-files, like the one in /proc have 0-block
                     # files. We definitely don't want to count those,
                     # like /proc/kcore. This does mean that we won't
                     # count sparse files of 0 non-zero blocks either
                     # anymore. I think we can live with that.
+                    # In count mode, count everything, even empty files.
                     app_size = use_size = 0
                 else:
-                    # Count both apparent and block size.
-                    app_size = st.st_size
-                    use_size = st.st_blocks << 9
+                    # Count objects or sizes based on mode.
+                    if self._count:
+                        app_size = use_size = 1
+                    else:
+                        app_size = st.st_size
+                        use_size = st.st_blocks << 9
 
                 if (use_size, app_size)[a_or_u] >= fraction:
                     child_node = DuNode.new_file(file_, app_size, use_size)
@@ -453,23 +458,37 @@ class DuScan:
                     app_mixed_total += app_leftover_bytes
                     use_mixed_total += use_leftover_bytes
 
-                # Also count the directory listing size to get the same
-                # total as `du -sb`. Note that du is about 1/3 faster,
-                # probably because it (a) keeps less stuff in memory and
-                # (b) because it uses a path relative fstatat which
-                # consumes less system time, and (c) it has no python
-                # overhead.
-                app_mixed_total += st.st_size
-                use_mixed_total += st.st_blocks << 9
-                self._app_subtotal += st.st_size
-                self._use_subtotal += st.st_blocks << 9
+                # Count the directory itself (1 in count mode, st.st_size in size mode)
+                if self._count:
+                    app_mixed_total += 1
+                    use_mixed_total += 1
+                    self._app_subtotal += 1
+                    self._use_subtotal += 1
+                else:
+                    # Also count the directory listing size to get the same
+                    # total as `du -sb`. Note that du is about 1/3 faster,
+                    # probably because it (a) keeps less stuff in memory and
+                    # (b) because it uses a path relative fstatat which
+                    # consumes less system time, and (c) it has no python
+                    # overhead.
+                    app_mixed_total += st.st_size
+                    use_mixed_total += st.st_blocks << 9
+                    self._app_subtotal += st.st_size
+                    self._use_subtotal += st.st_blocks << 9
 
             else:
-                # Also count the whatever-file-this-may-be size (symlink?).
-                app_mixed_total += st.st_size
-                use_mixed_total += st.st_blocks << 9
-                self._app_subtotal += st.st_size
-                self._use_subtotal += st.st_blocks << 9
+                # Count other file types (symlinks, etc.) - 1 in count mode, size in size mode
+                if self._count:
+                    app_mixed_total += 1
+                    use_mixed_total += 1
+                    self._app_subtotal += 1
+                    self._use_subtotal += 1
+                else:
+                    # Also count the whatever-file-this-may-be size (symlink?).
+                    app_mixed_total += st.st_size
+                    use_mixed_total += st.st_blocks << 9
+                    self._app_subtotal += st.st_size
+                    self._use_subtotal += st.st_blocks << 9
 
             # Recalculate fraction based on updated subtotal.
             fraction = (
@@ -748,6 +767,11 @@ def human(value):
     return '{}   B'.format(value)
 
 
+def format_files(value):
+    "Format file count with comma thousands separator and padding."
+    return '{:>7,d} files'.format(value)
+
+
 def main():
     parser = argparse.ArgumentParser(
             prog='dutree', description=(
@@ -764,6 +788,9 @@ def main():
         '--no-skip-proc-sys', action='store_true', help=(
             'do not skip the filesystem devices for proc and sys '
             'directories, by default these are skipped'))
+    parser.add_argument(
+        '-c', '--count', action='store_true', help=(
+            'count the number of objects instead of summing file sizes'))
     parser.add_argument('path')
 
     args = parser.parse_args()
@@ -775,24 +802,35 @@ def main():
 
     try:
         run(pathname=args.path, use_apparent_size=args.apparent_size,
-            xdev=args.xdev, skip_proc_sys=(not args.no_skip_proc_sys))
+            xdev=args.xdev, skip_proc_sys=(not args.no_skip_proc_sys),
+            count=args.count)
     except OSError as e:
         print('dutree: error: {}'.format(e), file=sys.stderr)
         exit(1)
 
 
-def run(pathname, use_apparent_size, xdev, skip_proc_sys):
-    if use_apparent_size:
+def run(pathname, use_apparent_size, xdev, skip_proc_sys, count=False):
+    if count:
         def getsize(node):
             return node.app_size()
+        def format_size(value):
+            return format_files(value)
+        verbose = False
+    elif use_apparent_size:
+        def getsize(node):
+            return node.app_size()
+        def format_size(value):
+            return human(value)
+        verbose = False
     else:
         def getsize(node):
             return node.use_size()
-
-    verbose = True and not use_apparent_size
+        def format_size(value):
+            return human(value)
+        verbose = True
 
     try:
-        scanner = DuScan(pathname)
+        scanner = DuScan(pathname, count=count)
         if xdev:
             scanner.skip_other_filesystems()
         elif skip_proc_sys:
@@ -808,12 +846,12 @@ def run(pathname, use_apparent_size, xdev, skip_proc_sys):
 
     for leaf in tree.get_leaves():
         sys.stdout.write(' {0:>7s}  {1}{2}\n'.format(
-            human(getsize(leaf)), leaf.name(),
+            format_size(getsize(leaf)), leaf.name(),
             (' (app={})'.format(human(leaf.app_size())) if verbose else '')))
     sys.stdout.write('   -----\n')
     size = getsize(tree)
     sys.stdout.write(' {0:>7s}  TOTAL ({1}{2})\n'.format(
-        human(size), size,
+        format_size(size), size,
         ', app={}'.format(human(tree.app_size())) if verbose else ''))
 
 

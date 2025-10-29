@@ -35,13 +35,13 @@ class DuScanTestMixin(object):
         pass
 
     @classmethod
-    def duscan_tree(cls, fs, path):
+    def duscan_tree(cls, fs, path, count=False):
         # Mock.
         dutree.listdir = fs.listdir
         dutree.lstat = fs.stat
 
         # Scan.
-        scanner = dutree.DuScan(path)
+        scanner = dutree.DuScan(path, count=count)
         tree = scanner.scan(cls.use_apparent_size)
         return tree
 
@@ -322,6 +322,176 @@ class DuScanCheckUseSizeTest(DuScanCheckDiffUseSizeMixin, TestCase):
             ('/*', 827392, 65161743360),
         ]
         self.assertEqual(self.leaves_as_list(self.tree), expected)
+
+
+class DuScanCountModeSeed1Depth4Test(DuScanTestMixin, TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fs = GeneratedFilesystem(seed=1, maxdepth=4)
+        cls.tree = cls.duscan_tree(cls.fs, '/', count=True)
+
+    def test_count_total(self):
+        """Verify total object count for seed 1, depth 4."""
+        dutree_count = self.tree.app_size()
+        self.debug('DuScanCountModeSeed1Depth4Test.test_count_total',
+                   dutree_count)
+        self.assertEqual(dutree_count, 165386)
+
+    def test_count_leaves(self):
+        """Verify leaves match expected counts."""
+        expected = [
+            ('/0.d/02.d/', 8794, 8794),
+            ('/0.d/07.d/', 8752, 8752),
+            ('/0.d/15.d/', 10609, 10609),
+            ('/0.d/*', 53685, 53685),
+            ('/1.d/00.d/', 10074, 10074),
+            ('/1.d/09.d/', 8899, 8899),
+            ('/1.d/11.d/', 8702, 8702),
+            ('/1.d/13.d/', 8556, 8556),
+            ('/1.d/*', 47264, 47264),
+            ('/*', 51, 51),
+        ]
+        self.assertEqual(self.leaves_as_list(self.tree), expected)
+
+    def test_count_vs_size(self):
+        """Verify that count mode differs dramatically from size mode."""
+        count_total = self.tree.app_size()
+        size_tree = self.duscan_tree(self.fs, '/', count=False)
+        size_total = size_tree.app_size()
+
+        self.debug('DuScanCountModeSeed1Depth4Test.test_count_vs_size',
+                   'count:', count_total, 'size:', size_total)
+        # Count should be much smaller than size (in bytes)
+        self.assertLess(count_total, size_total)
+        # Original size test shows 2053393838542 bytes
+        self.assertEqual(size_total, 2053393838542)
+
+
+class DuScanCountModeSeed206Depth2Test(DuScanTestMixin, TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fs = GeneratedFilesystem(seed=206, maxdepth=2)
+        cls.tree = cls.duscan_tree(cls.fs, '/', count=True)
+
+    def test_count_total(self):
+        """Verify total object count for seed 206, depth 2."""
+        dutree_count = self.tree.app_size()
+        self.debug('DuScanCountModeSeed206Depth2Test.test_count_total',
+                   dutree_count)
+        self.assertEqual(dutree_count, 24)
+
+    def test_count_leaves(self):
+        """Verify leaves match expected counts."""
+        expected = [
+            ('/00.txt', 1, 1),
+            ('/01.txt', 1, 1),
+            ('/02.txt', 1, 1),
+            ('/03.txt', 1, 1),
+            ('/04.txt', 1, 1),
+            ('/05.txt', 1, 1),
+            ('/06.txt', 1, 1),
+            ('/07.txt', 1, 1),
+            ('/08.txt', 1, 1),
+            ('/09.txt', 1, 1),
+            ('/10.txt', 1, 1),
+            ('/11.txt', 1, 1),
+            ('/12.txt', 1, 1),
+            ('/13.txt', 1, 1),
+            ('/14.txt', 1, 1),
+            ('/15.txt', 1, 1),
+            ('/16.txt', 1, 1),
+            ('/17.txt', 1, 1),
+            ('/18.txt', 1, 1),
+            ('/19.txt', 1, 1),
+            ('/20.txt', 1, 1),
+            ('/21.txt', 1, 1),
+            ('/22.txt', 1, 1),
+            ('/23.txt', 1, 1),
+        ]
+        self.assertEqual(self.leaves_as_list(self.tree), expected)
+
+    def test_count_vs_size(self):
+        """Verify count mode differs from size mode."""
+        count_total = self.tree.app_size()
+        size_tree = self.duscan_tree(self.fs, '/', count=False)
+        size_total = size_tree.app_size()
+
+        self.debug('DuScanCountModeSeed206Depth2Test.test_count_vs_size',
+                   'count:', count_total, 'size:', size_total)
+        # Count should be much smaller than size
+        self.assertLess(count_total, size_total)
+        self.assertEqual(count_total, 24)
+
+
+class DuScanCountModeBlocksTest(DuScanTestMixin, TestCase):
+    """Count mode should produce same results regardless of apparent_size setting."""
+    use_apparent_size = False
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fs = GeneratedFilesystem(seed=1, maxdepth=4)
+        cls.tree = cls.duscan_tree(cls.fs, '/', count=True)
+
+    def test_count_total_blocks(self):
+        """Verify total count is same regardless of use_apparent_size."""
+        dutree_count = self.tree.app_size()
+        # Should be same as with use_apparent_size=True
+        self.assertEqual(dutree_count, 165386)
+
+    def test_count_app_equals_use(self):
+        """In count mode, app_size and use_size should always be equal."""
+        self.assertEqual(self.tree.app_size(), self.tree.use_size())
+
+
+class DuScanCountModeCopeWithDeletionTest(DuScanTestMixin, TestCase):
+    def test_handle_deleted_count(self):
+        """Verify count mode handles deleted files/dirs correctly."""
+        fs = GeneratedFilesystem(seed=1, maxdepth=4)
+
+        # Count deleted objects
+        deleted_count = 0
+
+        # Hide a directory
+        deleted_count += 1  # the directory itself
+        # Plus all files/dirs within it (need to count them)
+        # For simplicity, just hide it and count the change
+
+        fs.hide_from_stat('/0.d/05.d')
+
+        # Scan with deletion
+        tree = self.duscan_tree(fs, '/', count=True)
+        count_with_deletion = tree.app_size()
+
+        # Should be less than original count of 165386
+        self.assertLess(count_with_deletion, 165386)
+        self.assertGreater(count_with_deletion, 0)
+
+
+class DuScanCountModeNoLonelyStarCountTest(DuScanTestMixin, TestCase):
+    """Verify pruning behavior works correctly in count mode."""
+    @classmethod
+    def setUpClass(cls):
+        cls.fs = GeneratedFilesystem(seed=6, maxdepth=4)
+        cls.tree = cls.duscan_tree(cls.fs, '/', count=True)
+
+    def test_count_leaves_pruning(self):
+        """Verify that pruning (5% threshold) works with counts."""
+        leaves = self.leaves_as_list(self.tree)
+        total_count = self.tree.app_size()
+        threshold = total_count // 20  # 5% threshold
+
+        # All leaves should be above threshold (except possibly "*" nodes)
+        for name, app_count, use_count in leaves:
+            if not name.endswith('*'):
+                self.assertGreaterEqual(app_count, threshold,
+                    f"{name} count {app_count} below threshold {threshold}")
+
+    def test_count_total_reasonable(self):
+        """Verify total count is in reasonable range for this seed."""
+        count = self.tree.app_size()
+        # Should be a substantial but not enormous number
+        self.assertGreater(count, 0)
+        self.assertLess(count, 1000000)
 
 
 if __name__ == '__main__':
