@@ -791,7 +791,9 @@ def main():
     parser.add_argument(
         '-c', '--count', action='store_true', help=(
             'count the number of objects instead of summing file sizes'))
-    parser.add_argument('path')
+    parser.add_argument(
+        'path', nargs='?', default='.', help=(
+            'path to directory (default: current working directory)'))
 
     args = parser.parse_args()
 
